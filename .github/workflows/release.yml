@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing version tag to build and publish
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -14,6 +20,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -28,18 +36,7 @@ jobs:
 
       - name: Build standalone GUI
         shell: pwsh
-        run: >-
-          python -m PyInstaller
-          --clean
-          --noconfirm
-          --onefile
-          --console
-            --windowed
-          --name OPC_UA_TIA_Export
-          --distpath dist
-          --workpath "$env:RUNNER_TEMP\opc-ua-export-build"
-          --specpath "$env:RUNNER_TEMP\opc-ua-export-spec"
-          opc_ua_export_app.py
+        run: python -m PyInstaller --clean --noconfirm --onefile --windowed --name OPC_UA_TIA_Export --distpath dist --workpath "$env:RUNNER_TEMP\opc-ua-export-build" --specpath "$env:RUNNER_TEMP\opc-ua-export-spec" opc_ua_export_app.py
 
       - name: Add generic TIA workbook
         run: Copy-Item generic_tia_hmi_template.xlsx dist/generic_tia_hmi_template.xlsx
@@ -57,12 +54,6 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         shell: pwsh
-        run: >-
-          gh release create "$env:GITHUB_REF_NAME"
-          --repo "$env:GITHUB_REPOSITORY"
-          --title "$env:GITHUB_REF_NAME"
-          --generate-notes
-          dist/OPC_UA_TIA_Export.exe
-            dist/generic_tia_hmi_template.xlsx
-          dist/SHA256SUMS.txt
+        run: gh release create "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" --title "$env:RELEASE_TAG" --generate-notes dist/OPC_UA_TIA_Export.exe dist/generic_tia_hmi_template.xlsx dist/SHA256SUMS.txt

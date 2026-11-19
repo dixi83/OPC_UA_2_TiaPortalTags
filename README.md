@@ -155,7 +155,7 @@ The release workflow builds on a clean Windows GitHub-hosted runner with Python 
 
 ## GitHub Releases
 
-Pushing a version tag matching `v*` runs `.github/workflows/release.yml`. The workflow runs the test suite, creates a clean Windows GUI executable, writes SHA-256 checksums, and publishes the executable, generic TIA workbook, and checksum file to a GitHub Release. It does not package certificates, keys, or PLC export data. The generic workbook targets Siemens S7 OPC UA; users with another namespace or project configuration can select their own TIA export.
+Pushing a version tag matching `v*` runs `.github/workflows/release.yml`. The workflow runs the test suite, creates a clean Windows GUI executable, writes SHA-256 checksums, and publishes the executable, generic TIA workbook, and checksum file to a GitHub Release. It does not package certificates, keys, or PLC export data. The generic workbook targets Siemens S7 OPC UA; users with another namespace or project configuration can select their own TIA export. If a tag-triggered run fails and the workflow is corrected on `main`, retry it without moving the tag with `gh workflow run release.yml --ref main -f release_tag=v0.1.0`.
 
 To create a release after reviewing and committing the source changes:
 
