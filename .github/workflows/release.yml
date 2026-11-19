@@ -1,0 +1,68 @@
+name: Build and publish release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime and build dependencies
+        run: python -m pip install -r requirements-build.txt
+
+      - name: Run test suite
+        run: python -m unittest -v test_opc_ua_export test_opc_ua_export_app test_tia_hmi_export
+
+      - name: Build standalone GUI
+        shell: pwsh
+        run: >-
+          python -m PyInstaller
+          --clean
+          --noconfirm
+          --onefile
+          --console
+            --windowed
+          --name OPC_UA_TIA_Export
+          --distpath dist
+          --workpath "$env:RUNNER_TEMP\opc-ua-export-build"
+          --specpath "$env:RUNNER_TEMP\opc-ua-export-spec"
+          opc_ua_export_app.py
+
+      - name: Add generic TIA workbook
+        run: Copy-Item generic_tia_hmi_template.xlsx dist/generic_tia_hmi_template.xlsx
+
+      - name: Create SHA-256 checksum
+        shell: pwsh
+        run: |
+          $assets = @('OPC_UA_TIA_Export.exe', 'generic_tia_hmi_template.xlsx')
+          $lines = foreach ($asset in $assets) {
+            $hash = (Get-FileHash "dist/$asset" -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $asset"
+          }
+          $lines | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: >-
+          gh release create "$env:GITHUB_REF_NAME"
+          --repo "$env:GITHUB_REPOSITORY"
+          --title "$env:GITHUB_REF_NAME"
+          --generate-notes
+          dist/OPC_UA_TIA_Export.exe
+            dist/generic_tia_hmi_template.xlsx
+          dist/SHA256SUMS.txt
