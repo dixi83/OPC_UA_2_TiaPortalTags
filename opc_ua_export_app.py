@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import socket
 import sys
+import threading
+import traceback
 from pathlib import Path
+from urllib.parse import urlencode
 
-from PySide6.QtCore import QThread, Signal
-from PySide6.QtGui import QIcon
+from asyncua.crypto import cert_gen
+from cryptography.hazmat.primitives import hashes
+from cryptography.x509.oid import ExtendedKeyUsageOID
+from PySide6.QtCore import QThread, Signal, QUrl
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -28,9 +35,46 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from opc_ua_export import BASE_DIR, DEFAULT_TEMPLATE, main as run_export
+from opc_ua_export import BASE_DIR, main as run_export
 from settings_store import default_settings_path, load_settings, save_settings
 from version import __version__
+
+APPLICATION_URI = "urn:opc-ua-tia-export:client"
+REPOSITORY_URL = "https://github.com/dixi83/OPC_UA_2_TiaPortalTags"
+
+
+def github_issue_url(status_log: str) -> str:
+    """Build a prefilled GitHub issue while preserving the full log in the form body."""
+    truncated_log = status_log[-12000:]
+    if len(status_log) > len(truncated_log):
+        truncated_log = "[Earlier log content was omitted. Copy the full Status log if relevant.]\n\n" + truncated_log
+    body = f"""## Environment
+
+- Application version: `{__version__}`
+- Windows version:
+- TIA Portal version:
+- HMI type (Unified Runtime PC / Unified Comfort Panel / other):
+
+## Problem
+
+Describe what happened and what you expected.
+
+## Status log
+
+```text
+{truncated_log or "No status log was available."}
+```
+
+## Privacy check
+
+Before submitting, personally review and remove endpoint addresses, hostnames, usernames, project names, certificate details, tag names, file paths, and any other sensitive information.
+
+## TIA import failure
+
+If the failure happens while importing the generated workbook into TIA Portal, attach the TIA Portal `import.xml` and identify the affected HMI and TIA version.
+"""
+    query = urlencode({"title": f"Bug report - OPC UA to TIA HMI {__version__}", "body": body})
+    return f"{REPOSITORY_URL}/issues/new?{query}"
 
 
 def application_icon() -> QIcon:
@@ -39,19 +83,39 @@ def application_icon() -> QIcon:
     return QIcon(str(resource_root / "assets" / "branding" / "icon.ico"))
 
 
+def ensure_client_identity(directory: Path) -> tuple[Path, Path]:
+    """Create or refresh the per-user OPC UA client certificate and key."""
+    directory.mkdir(parents=True, exist_ok=True)
+    certificate = directory / "client.der"
+    private_key = directory / "client.pem"
+    asyncio.run(
+        cert_gen.setup_self_signed_certificate(
+            private_key,
+            certificate,
+            APPLICATION_URI,
+            socket.gethostname(),
+            [ExtendedKeyUsageOID.CLIENT_AUTH],
+            {"organizationName": "OPC UA to TIA Export"},
+        )
+    )
+    return certificate, private_key
+
+
 class ExportWorker(QThread):
     """Run the asynchronous export on a worker thread and emit UI-safe signals."""
 
     progress_message = Signal(str)
     completed = Signal(int)
     failed = Signal(str)
+    certificate_confirmation_requested = Signal(str, str)
 
-    def __init__(self, args, password, output_dir):
+    def __init__(self, args, password, output_dir, accepted_server_certificates=None):
         super().__init__()
         self.args = args
         self.password = password
         self.output_dir = output_dir
-        """Run the asynchronous OPC UA export without blocking the Qt event loop."""
+        self.accepted_server_certificates = accepted_server_certificates if accepted_server_certificates is not None else set()
+        self._certificate_decisions = {}
 
     def run(self):
         """Execute one export and forward progress and terminal status through Qt signals."""
@@ -62,14 +126,51 @@ class ExportWorker(QThread):
                     password=self.password,
                     progress=self.progress_message.emit,
                     output_dir=self.output_dir,
+                    certificate_validator=self._validate_server_certificate,
                 )
             )
             self.completed.emit(result)
         except Exception as exc:
-            self.failed.emit(str(exc))
+            message = str(exc).strip() or repr(exc)
+            details = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            self.failed.emit(f"{type(exc).__name__}: {message}\n{details}")
         finally:
             # Drop this worker's reference to the password as soon as the run ends.
             self.password = None
+
+    async def _validate_server_certificate(self, certificate, application):
+        fingerprint = certificate.fingerprint(hashes.SHA256()).hex(":")
+        if fingerprint in self.accepted_server_certificates:
+            return
+        ready = threading.Event()
+        decision = [False]
+        self._certificate_decisions[fingerprint] = (ready, decision)
+        name = getattr(getattr(application, "ApplicationName", None), "Text", "")
+        application_uri = getattr(application, "ApplicationUri", "")
+        details = (
+            "Trust this OPC UA server certificate for the rest of this application session?\n\n"
+            f"Application: {name or '<not provided>'}\n"
+            f"Application URI: {application_uri or '<not provided>'}\n"
+            f"Subject: {certificate.subject.rfc4514_string()}\n"
+            f"Issuer: {certificate.issuer.rfc4514_string()}\n"
+            f"Valid from: {certificate.not_valid_before_utc.isoformat()}\n"
+            f"Valid until: {certificate.not_valid_after_utc.isoformat()}\n"
+            f"SHA-256: {fingerprint}\n\n"
+            "Accept only after verifying the fingerprint through a trusted channel."
+        )
+        self.certificate_confirmation_requested.emit(fingerprint, details)
+        await asyncio.to_thread(ready.wait)
+        if not decision[0]:
+            raise ValueError("The server certificate was not accepted.")
+        self.accepted_server_certificates.add(fingerprint)
+
+    def set_certificate_decision(self, fingerprint, accepted):
+        pending = self._certificate_decisions.pop(fingerprint, None)
+        if pending is None:
+            return
+        ready, decision = pending
+        decision[0] = accepted
+        ready.set()
 
 
 class ExportWindow(QMainWindow):
@@ -81,6 +182,7 @@ class ExportWindow(QMainWindow):
         self.resize(930, 900)
         self.setMinimumSize(780, 760)
         self.worker = None
+        self.accepted_server_certificates = set()
         self.settings_file = Path(settings_file) if settings_file is not None else default_settings_path()
 
         self.endpoint = QLineEdit()
@@ -100,9 +202,6 @@ class ExportWindow(QMainWindow):
         self.client_cert = QLineEdit()
         self.client_key = QLineEdit()
         self.server_cert = QLineEdit()
-        self.template = QLineEdit(str(DEFAULT_TEMPLATE))
-        self.example_tag = QLineEdit("ExampleTag")
-        self.example_tag.setPlaceholderText("Name of the example tag in the workbook")
         self.output_dir = QLineEdit(str(BASE_DIR / "export"))
         self.start_node = QLineEdit()
         self.limit = QSpinBox()
@@ -123,6 +222,10 @@ class ExportWindow(QMainWindow):
         self.start_button = QPushButton("Start export")
         self.start_button.setObjectName("primaryButton")
         self.start_button.clicked.connect(self._start_export)
+        self.readme_button = QPushButton("Open README")
+        self.readme_button.clicked.connect(self._open_readme)
+        self.issue_button = QPushButton("Report issue on GitHub")
+        self.issue_button.clicked.connect(self._open_issue)
 
         self._restore_settings()
         self._build_layout()
@@ -155,15 +258,22 @@ class ExportWindow(QMainWindow):
         connection_form.addRow("Channel security *", self.security_mode)
         connection_form.addRow("", self.security_ack)
         connection_form.addRow("Security policy (secure mode)", self.policy)
-        connection_form.addRow("Client certificate (secure mode)", self._file_field(self.client_cert, "Browse...", "cert"))
-        connection_form.addRow("Private key (secure mode)", self._file_field(self.client_key, "Browse...", "key"))
-        connection_form.addRow("Server certificate (secure mode)", self._file_field(self.server_cert, "Browse...", "cert"))
+        connection_form.addRow(
+            "Client certificate (optional; generated automatically)",
+            self._file_field(self.client_cert, "Browse...", "cert"),
+        )
+        connection_form.addRow(
+            "Private key (optional; generated automatically)",
+            self._file_field(self.client_key, "Browse...", "key"),
+        )
+        connection_form.addRow(
+            "Server certificate (secure mode; optional after confirmation)",
+            self._file_field(self.server_cert, "Browse...", "cert"),
+        )
         outer.addWidget(connection_group)
 
         export_group = QGroupBox("Export settings")
         export_form = QFormLayout(export_group)
-        export_form.addRow("TIA workbook *", self._file_field(self.template, "Browse...", "xlsx"))
-        export_form.addRow("Example tag name *", self.example_tag)
         export_form.addRow("Export folder *", self._directory_field(self.output_dir))
         self.start_node.setPlaceholderText("Optional; blank = Objects")
         export_form.addRow("Starting NodeId (optional)", self.start_node)
@@ -190,6 +300,8 @@ class ExportWindow(QMainWindow):
         status_layout.addWidget(self.log, 1)
         outer.addWidget(status_group, 1)
         actions = QHBoxLayout()
+        actions.addWidget(self.readme_button)
+        actions.addWidget(self.issue_button)
         actions.addStretch(1)
         actions.addWidget(self.start_button)
         outer.addLayout(actions)
@@ -233,9 +345,7 @@ class ExportWindow(QMainWindow):
         return container
 
     def _choose_file(self, line_edit, file_kind):
-        if file_kind == "xlsx":
-            file_filter = "Excel workbook (*.xlsx);;All files (*.*)"
-        elif file_kind == "key":
+        if file_kind == "key":
             file_filter = "Private key (*.pem *.key);;All files (*.*)"
         else:
             file_filter = "Certificate (*.der *.pem *.crt *.cer);;All files (*.*)"
@@ -258,8 +368,6 @@ class ExportWindow(QMainWindow):
             "client_cert": self.client_cert,
             "client_key": self.client_key,
             "server_cert": self.server_cert,
-            "template": self.template,
-            "example_tag": self.example_tag,
             "output_dir": self.output_dir,
             "start_node": self.start_node,
         }
@@ -289,8 +397,6 @@ class ExportWindow(QMainWindow):
             "client_cert": self.client_cert.text().strip(),
             "client_key": self.client_key.text().strip(),
             "server_cert": self.server_cert.text().strip(),
-            "template": self.template.text().strip(),
-            "example_tag": self.example_tag.text().strip(),
             "output_dir": self.output_dir.text().strip(),
             "start_node": self.start_node.text().strip(),
             "limit": self.limit.value(),
@@ -324,20 +430,14 @@ class ExportWindow(QMainWindow):
     def _arguments(self):
         endpoint = self.endpoint.text().strip()
         connection = self.connection.text().strip()
-        template = Path(self.template.text().strip())
         output_text = self.output_dir.text().strip()
         if not endpoint:
             raise ValueError("Enter the OPC UA endpoint.")
         if not connection or connection.casefold() in {"<internal tag>", "<no value>", "todo_connection"}:
             raise ValueError("Enter an existing TIA HMI connection name.")
-        if not template.is_file():
-            raise ValueError(f"TIA workbook not found: {template}")
         if not output_text:
             raise ValueError("Choose an export folder.")
         output_dir = Path(output_text)
-        example_tag = self.example_tag.text().strip()
-        if not example_tag:
-            raise ValueError("Enter the example tag name from the selected workbook.")
 
         anonymous = self.anonymous.isChecked()
         username = self.username.text().strip()
@@ -348,15 +448,31 @@ class ExportWindow(QMainWindow):
         security_mode = self.security_mode.currentText()
         security = None
         allow_insecure = False
+        application_uri = None
         if security_mode == "Unencrypted":
             if not self.security_ack.isChecked():
                 raise ValueError("Explicitly confirm that you allow unencrypted communication.")
             allow_insecure = True
         else:
-            cert_values = [self.client_cert.text().strip(), self.client_key.text().strip(), self.server_cert.text().strip()]
-            if not all(Path(path).is_file() for path in cert_values):
-                raise ValueError("Select existing client certificate, private key, and server certificate files.")
-            security = ",".join([self.policy.currentText().strip(), security_mode, *cert_values])
+            client_certificate = self.client_cert.text().strip()
+            client_key = self.client_key.text().strip()
+            if bool(client_certificate) != bool(client_key):
+                raise ValueError("Select both the client certificate and private key, or leave both empty.")
+            if client_certificate and client_key:
+                if not all(Path(path).is_file() for path in (client_certificate, client_key)):
+                    raise ValueError("The selected client certificate or private key file does not exist.")
+                client_values = [client_certificate, client_key]
+            else:
+                generated = ensure_client_identity(self.settings_file.parent / "client-identity")
+                client_values = [str(path) for path in generated]
+                application_uri = APPLICATION_URI
+            server_certificate = self.server_cert.text().strip()
+            if server_certificate and not Path(server_certificate).is_file():
+                raise ValueError("The selected server certificate file does not exist.")
+            security_values = [self.policy.currentText().strip(), security_mode, *client_values]
+            if server_certificate:
+                security_values.append(server_certificate)
+            security = ",".join(security_values)
 
         args = argparse.Namespace(
             endpoint=endpoint,
@@ -366,10 +482,9 @@ class ExportWindow(QMainWindow):
             allow_insecure=allow_insecure,
             start_node=self.start_node.text().strip() or None,
             limit=self.limit.value(),
-            tia_template=template,
-            tia_example_tag=example_tag,
             connection=connection,
             timeout=self.timeout.value(),
+            application_uri=application_uri,
         )
         return args, password, output_dir
 
@@ -384,18 +499,50 @@ class ExportWindow(QMainWindow):
         self.activity.setRange(0, 0)
         self.status.setText("Connecting to OPC UA server...")
         self.log.appendPlainText("Export started")
-        self.worker = ExportWorker(args, password, output_dir)
+        self.worker = ExportWorker(args, password, output_dir, self.accepted_server_certificates)
         self.worker.progress_message.connect(self._show_progress)
         self.worker.completed.connect(self._export_completed)
         self.worker.failed.connect(self._export_failed)
+        self.worker.certificate_confirmation_requested.connect(self._confirm_server_certificate)
         self.worker.start()
-        # Clear the visible input after the worker receives its in-memory copy.
-        self.password.clear()
+
+    def _confirm_server_certificate(self, fingerprint, details):
+        answer = QMessageBox.question(
+            self,
+            "Trust server certificate?",
+            details,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        accepted = answer == QMessageBox.StandardButton.Yes
+        if accepted:
+            self.accepted_server_certificates.add(fingerprint)
+        if self.worker:
+            self.worker.set_certificate_decision(fingerprint, accepted)
 
     def _show_progress(self, message):
         self.log.appendPlainText(message)
         if message.startswith(("Browsed:", "Found:")):
             self.status.setText(message)
+
+    def _open_readme(self):
+        QDesktopServices.openUrl(QUrl(f"{REPOSITORY_URL}/blob/main/README.md"))
+
+    def _open_issue(self):
+        answer = QMessageBox.warning(
+            self,
+            "Review issue contents",
+            "The GitHub form will contain the current Status log and application version. "
+            "Review and remove sensitive endpoints, users, paths, certificates, tag names, "
+            "or project information before submitting anything. Continue to GitHub?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        issue_url = github_issue_url(self.log.toPlainText())
+        QApplication.clipboard().setText(issue_url)
+        QDesktopServices.openUrl(QUrl(issue_url))
 
     def _export_completed(self, exit_code):
         self.activity.setRange(0, 1)
@@ -408,7 +555,8 @@ class ExportWindow(QMainWindow):
         self.activity.setValue(0)
         self.start_button.setEnabled(True)
         self.status.setText("Export stopped due to an error")
-        self.log.appendPlainText("Error: " + error)
+        self.log.appendPlainText("Error:\n" + error.rstrip())
+        QMessageBox.critical(self, "Export failed", error.splitlines()[0] if error else "Unknown export error")
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():

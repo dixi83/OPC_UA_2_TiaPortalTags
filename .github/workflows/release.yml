@@ -38,24 +38,36 @@ jobs:
         shell: pwsh
         run: python -m PyInstaller --clean --noconfirm --onefile --windowed --icon "$env:GITHUB_WORKSPACE\assets\branding\icon.ico" --add-data "$env:GITHUB_WORKSPACE\assets\branding\icon.ico;assets\branding" --name OPC_UA_TIA_Export --distpath dist --workpath "$env:RUNNER_TEMP\opc-ua-export-build" --specpath "$env:RUNNER_TEMP\opc-ua-export-spec" opc_ua_export_app.py
 
-      - name: Add release documents
-        run: |
-          Copy-Item generic_tia_hmi_template.xlsx dist/generic_tia_hmi_template.xlsx
-          Copy-Item LICENSE.md dist/LICENSE.md
+      - name: Add release license
+        run: Copy-Item LICENSE.md dist/LICENSE.md
 
       - name: Create SHA-256 checksum
         shell: pwsh
         run: |
-          $assets = @('OPC_UA_TIA_Export.exe', 'generic_tia_hmi_template.xlsx', 'LICENSE.md')
+          $assets = @('OPC_UA_TIA_Export.exe', 'LICENSE.md')
           $lines = foreach ($asset in $assets) {
             $hash = (Get-FileHash "dist/$asset" -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $asset"
           }
           $lines | Set-Content dist/SHA256SUMS.txt -Encoding ascii
 
+      - name: Extract release notes from changelog
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        shell: pwsh
+        run: |
+          $version = $env:RELEASE_TAG.TrimStart('v')
+          $escapedVersion = [regex]::Escape($version)
+          $changelog = Get-Content CHANGELOG.md -Raw
+          $match = [regex]::Match($changelog, "(?ms)^## $escapedVersion(?: - [^\r\n]+)?\r?\n(.*?)(?=^## |\z)")
+          if (-not $match.Success) {
+              throw "No CHANGELOG.md section found for $env:RELEASE_TAG"
+          }
+          $match.Groups[1].Value.Trim() | Set-Content dist/RELEASE_NOTES.md -Encoding utf8
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         shell: pwsh
-        run: gh release create "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" --title "$env:RELEASE_TAG" --generate-notes dist/OPC_UA_TIA_Export.exe dist/generic_tia_hmi_template.xlsx dist/LICENSE.md dist/SHA256SUMS.txt
+        run: gh release create "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" --title "$env:RELEASE_TAG" --notes-file dist/RELEASE_NOTES.md dist/OPC_UA_TIA_Export.exe dist/LICENSE.md dist/SHA256SUMS.txt

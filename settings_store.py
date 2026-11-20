@@ -17,8 +17,6 @@ SETTING_KEYS = {
     "client_cert",
     "client_key",
     "server_cert",
-    "template",
-    "example_tag",
     "output_dir",
     "start_node",
     "limit",

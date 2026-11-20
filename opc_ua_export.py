@@ -7,19 +7,38 @@ import logging
 import re
 import sys
 from collections import Counter, deque
-from copy import copy
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
 from asyncua import Client, ua
-from openpyxl import load_workbook
+from openpyxl import Workbook
 
 from version import __version__
 
 
 BASE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
-DEFAULT_TEMPLATE = BASE_DIR / "generic_tia_hmi_template.xlsx"
+TIA_NAMESPACE = "http://www.siemens.com/simatic-s7-opcua"
+TIA_HEADERS = [
+    "Name", "Path", "Connection", "PLC tag", "DataType", "HMI DataType", "Length",
+    "Access Method", "Address", "Start value", "Persistency", "Substitute value", "ID tag",
+    "Display name [en-IE]", "Comment [en-IE]", "Acquisition mode", "Acquisition cycle",
+    "Limit Upper 2 Type", "Limit Upper 2", "Limit Upper 1 Type", "Limit Upper 1",
+    "Limit Lower 1 Type", "Limit Lower 1", "Limit Lower 2 Type", "Limit Lower 2",
+    "Linear scaling", "End value PLC", "Start value PLC", "End value HMI", "Start value HMI",
+    "Gmp relevant", "Confirmation Type", "RequiredFunctionRights", "Mandatory Commenting",
+    "Scope", "Multiplex DB Name", "Read HandshakeTag", "Buffer HandshakeTag",
+    "Write HandshakeTag", "Timeout",
+]
+TIA_DEFAULT_ROW = [
+    "", "Default tag table", "", "<No Value>", "Int32", "DInt", 4, "Absolute access", "",
+    "<No Value>", "False", "<No Value>", 0, "<No Value>", "<No Value>",
+    "Cyclic in operation", "T1s", "None", "<No Value>", "None", "<No Value>",
+    "None", "<No Value>", "None", "<No Value>", "False", 10, 0, 100, 0,
+    "False", "None", "<No Value>", "False", "System-wide", "False",
+    "<No Value>", "<No Value>", "<No Value>", "0",
+]
+TIA_SUBSTITUTE_HEADERS = ["HMI Tag name", "Substitute Value Usage"]
 # Each mapping stores the OPC UA display name, TIA HMI type, and byte length.
 TYPE_MAPPING = {
     ua.NodeId(ua.ObjectIds.Boolean).to_string(): ("Boolean", "Bool", 1),
@@ -30,7 +49,6 @@ TYPE_MAPPING = {
     ua.NodeId(ua.ObjectIds.Float).to_string(): ("Float", "Real", 4),
     ua.NodeId(ua.ObjectIds.Double).to_string(): ("Double", "LReal", 8),
 }
-REQUIRED_HEADERS = ("Name", "Connection", "DataType", "HMI DataType", "Length", "Access Method", "Address")
 HEADERS = [
     "Path", "BrowseName", "DisplayName", "NodeId", "NamespaceUri",
     "DataTypeNodeId", "DataType", "ValueRank", "ArrayDimensions",
@@ -170,37 +188,9 @@ async def collect(client, start_node, limit=None, eligible=None, progress=None):
 
 
 def tag_name(identifier):
-    """Normalize a string NodeId identifier to TIA's accepted tag-name characters."""
-    """Normalize a string NodeId identifier to the accepted TIA tag-name alphabet."""
+    """Remove NodeId quotes, join quoted segments, and sanitize unsupported characters."""
     name = identifier.replace('"."', '_').replace('"', '')
-    return name.translate(str.maketrans({character: "_" for character in "#$*%./:?[]`~"}))
-
-
-def get_example(sheet, example_name):
-    """Validate the selected HMI example tag and return its reusable row data."""
-    headers = [cell.value for cell in sheet[1]]
-    nonempty_headers = [header for header in headers if header is not None]
-    if len(set(nonempty_headers)) != len(nonempty_headers):
-        raise ValueError("The workbook contains duplicate column names.")
-    if any(header not in headers for header in REQUIRED_HEADERS):
-        raise ValueError("The workbook is missing a required HMI column.")
-    columns = {header: index for index, header in enumerate(headers) if header is not None}
-    matches = [row for row in sheet.iter_rows(min_row=2) if row[columns["Name"]].value == example_name]
-    if len(matches) != 1:
-        raise ValueError("Example tag was not found or is not unique.")
-    example = matches[0]
-    values = [cell.value for cell in example]
-    sample_address = values[columns["Address"]]
-    connection = values[columns["Connection"]]
-    datatype = values[columns["DataType"]]
-    if (not isinstance(sample_address, str) or not sample_address.startswith("ns=")
-            or ";s=" not in sample_address or not connection or connection == "<No Value>"
-            or values[columns["Access Method"]] != "Absolute access"):
-        raise ValueError("The example tag must be a connected OPC UA tag with a string NodeId.")
-    namespace = sample_address[3:].split(";s=", 1)[0]
-    if not namespace or not datatype or datatype == "<No Value>":
-        raise ValueError("The example tag is missing its namespace or data type.")
-    return columns, example, values, namespace, datatype, connection
+    return name.translate(str.maketrans({character: "_" for character in "#$*%/:?[]`~"}))
 
 
 def skip_reason(record, namespace):
@@ -218,62 +208,71 @@ def skip_reason(record, namespace):
     return None
 
 
-def write_tia_export(template_path, example_name, rows, output_dir, connection_name):
-    """Copy supported tags into a new workbook based on a user-selected example row."""
+async def connect_client(client, report, attempts=2):
+    """Retry the connection once when a PLC closes or invalidates a new session."""
+    retryable_codes = {ua.StatusCodes.BadSessionClosed, ua.StatusCodes.BadSessionIdInvalid}
+    for attempt in range(attempts):
+        try:
+            await client.connect()
+            return
+        except ua.UaStatusCodeError as exc:
+            if exc.code not in retryable_codes or attempt + 1 >= attempts:
+                raise
+            report("The OPC UA server invalidated the new session; reconnecting once...", error=True)
+            await asyncio.sleep(0.5)
+
+
+def write_tia_export(rows, output_dir, connection_name):
+    """Generate the fixed TIA HMI import workbook without an input template."""
     connection_name = connection_name.strip()
     if not connection_name or connection_name.casefold() in {"<internal tag>", "<no value>", "todo_connection"}:
         raise ValueError("Enter a valid existing TIA connection name.")
-    workbook = load_workbook(template_path)
+    selected = []
+    skipped = Counter()
+    names = set()
+    for record in rows:
+        match = re.fullmatch(r"(?:ns=\d+;)?s=(.+)", record["NodeId"], re.DOTALL)
+        reason = skip_reason(record, TIA_NAMESPACE)
+        if reason:
+            skipped[reason] += 1
+            continue
+        assert match is not None
+        identifier = match.group(1)
+        name = tag_name(identifier)
+        if not name or name.casefold() in names:
+            raise ValueError(f"Empty or duplicate tag name: {name!r}; check the NodeIds.")
+        names.add(name.casefold())
+        selected.append((name, f"ns={TIA_NAMESPACE};s={identifier}", TYPE_MAPPING[record["DataTypeNodeId"]]))
+    if not selected:
+        raise ValueError("No matching readable tags were found; no file was created. Try --limit 0 or a higher limit.")
+
+    columns = {header: index for index, header in enumerate(TIA_HEADERS)}
+    workbook = Workbook()
     try:
-        if "Hmi Tags" not in workbook:
-            raise ValueError("The workbook has no 'Hmi Tags' worksheet.")
-        sheet = workbook["Hmi Tags"]
-        columns, example, values, namespace, datatype, connection = get_example(sheet, example_name)
-        selected = []
-        skipped = Counter()
-        names = set()
-        for record in rows:
-            match = re.fullmatch(r"(?:ns=\d+;)?s=(.+)", record["NodeId"], re.DOTALL)
-            reason = skip_reason(record, namespace)
-            if reason:
-                skipped[reason] += 1
-            else:
-                assert match is not None
-                identifier = match.group(1)
-                name = tag_name(identifier)
-                if not name or name.casefold() in names:
-                        raise ValueError(f"Empty or duplicate tag name: {name!r}; check the NodeIds.")
-                names.add(name.casefold())
-                selected.append((name, "ns=" + namespace + ";s=" + identifier, TYPE_MAPPING[record["DataTypeNodeId"]]))
-        if not selected:
-            raise ValueError("No matching readable tags were found; no file was created. Try --limit 0 or a higher limit.")
-        styles = [copy(cell._style) for cell in example]
-        sheet.delete_rows(2, sheet.max_row - 1)
+        sheet = workbook.active
+        sheet.title = "Hmi Tags"
+        sheet.append(TIA_HEADERS)
         for name, address, type_values in selected:
-            row_values = list(values)
+            row_values = list(TIA_DEFAULT_ROW)
             row_values[columns["Name"]] = name
             row_values[columns["Connection"]] = connection_name
             row_values[columns["Address"]] = address
             row_values[columns["DataType"]], row_values[columns["HMI DataType"]], row_values[columns["Length"]] = type_values
             sheet.append(row_values)
-            for cell, style in zip(sheet[sheet.max_row], styles):
-                cell._style = copy(style)
+            for cell in sheet[sheet.max_row]:
                 if isinstance(cell.value, str):
                     cell.data_type = "s"
-        # The template's substitute-value references are specific to its original tags.
-        for other in workbook:
-            if other.title == "Substitute Value Usage" and other.max_row > 1:
-                other.delete_rows(2, other.max_row - 1)
+        workbook.create_sheet("Substitute Value Usage").append(TIA_SUBSTITUTE_HEADERS)
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"tia_hmi_{datetime.now():%Y%m%d_%H%M%S_%f}.xlsx"
         workbook.save(output_path)
-        return output_path, len(selected), skipped, datatype, connection_name
+        return output_path, len(selected), skipped, TIA_NAMESPACE, connection_name
     finally:
         workbook.close()
 
 
 def parse_args():
-    """Build the CLI parser; workbook and example selection are intentionally explicit."""
+    """Build the CLI parser for OPC UA connection and export options."""
     parser = argparse.ArgumentParser(description="Export OPC UA variables to a TIA HMI workbook.")
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--endpoint", help="OPC UA endpoint, for example opc.tcp://host:4840")
@@ -284,14 +283,12 @@ def parse_args():
     parser.add_argument("--allow-insecure", action="store_true", help="Explicitly allow a connection without channel security")
     parser.add_argument("--start-node", help="Optional starting NodeId; defaults to Objects")
     parser.add_argument("--limit", type=int, default=100, help="Maximum suitable tags (default: 100; 0: unlimited)")
-    parser.add_argument("--tia-template", type=Path, default=DEFAULT_TEMPLATE, help="TIA HMI workbook (default: generic template beside the application)")
-    parser.add_argument("--tia-example-tag", default="ExampleTag", help="Name of the OPC UA example tag (default: ExampleTag)")
     parser.add_argument("--connection", help="Existing TIA HMI connection name; prompted when omitted")
     parser.add_argument("--timeout", type=float, default=10, help="Timeout per server request in seconds")
     return parser.parse_args()
 
 
-async def main(args=None, password=None, progress=None, output_dir=None):
+async def main(args=None, password=None, progress=None, output_dir=None, certificate_validator=None):
     """Run the shared CLI/GUI export flow, accepting optional GUI callbacks and inputs."""
     args = args or parse_args()
 
@@ -305,15 +302,6 @@ async def main(args=None, password=None, progress=None, output_dir=None):
     connection_name = connection_name.strip()
     if not connection_name or connection_name.casefold() in {"<internal tag>", "<no value>", "todo_connection"}:
         raise ValueError("Enter a valid existing TIA connection name.")
-    if not args.tia_template.is_file():
-        raise ValueError(f"TIA workbook not found: {args.tia_template}")
-    workbook = load_workbook(args.tia_template, read_only=True)
-    try:
-        if "Hmi Tags" not in workbook:
-            raise ValueError("The workbook has no 'Hmi Tags' worksheet.")
-        _, _, _, namespace, datatype, _ = get_example(workbook["Hmi Tags"], args.tia_example_tag)
-    finally:
-        workbook.close()
     endpoint = args.endpoint or input("OPC UA endpoint (opc.tcp://...): ").strip()
     parsed = urlparse(endpoint)
     if parsed.scheme != "opc.tcp" or not parsed.hostname or parsed.username or parsed.password:
@@ -325,6 +313,8 @@ async def main(args=None, password=None, progress=None, output_dir=None):
     if not args.security and not args.allow_insecure:
         raise ValueError("Provide --security or explicitly use --allow-insecure for an unencrypted connection.")
     client = Client(endpoint, timeout=args.timeout)
+    if getattr(args, "application_uri", None):
+        client.application_uri = args.application_uri
     if not args.anonymous:
         username = args.user or input("Username: ").strip()
         if not username:
@@ -333,22 +323,34 @@ async def main(args=None, password=None, progress=None, output_dir=None):
         client.set_password(password if password is not None else getpass.getpass("Password: "))
     if args.security:
         parts = args.security.split(",")
-        if len(parts) != 5 or any(not part for part in parts):
-            raise ValueError("--security requires policy,mode,client-certificate,private-key,server-certificate.")
+        if len(parts) not in (4, 5) or any(not part for part in parts):
+            raise ValueError("--security requires policy,mode,client-certificate,private-key[,server-certificate].")
+        if len(parts) == 4 and certificate_validator is None:
+            raise ValueError("Provide a server certificate for CLI connections.")
         if parts[0] != "Basic256Sha256" or parts[1] not in ("Sign", "SignAndEncrypt"):
             raise ValueError("Use the Basic256Sha256 policy and the Sign or SignAndEncrypt mode.")
+        if len(parts) == 4:
+            client.certificate_validator = certificate_validator
         await client.set_security_string(args.security)
     else:
         report("WARNING: the connection is unencrypted; credentials may be exposed on the network.", error=True)
     report("Connecting and browsing the address space...")
-    async with client:
+    await connect_client(client, report)
+    try:
         rows, errors, namespaces = await collect(
             client,
             args.start_node,
             args.limit or None,
-            lambda row: skip_reason(row, namespace) is None,
+            lambda row: skip_reason(row, TIA_NAMESPACE) is None,
             progress=report,
         )
+    finally:
+        try:
+            await client.disconnect()
+        except ua.UaStatusCodeError as exc:
+            if exc.code not in {ua.StatusCodes.BadSessionClosed, ua.StatusCodes.BadSessionIdInvalid}:
+                raise
+            report("The OPC UA server had already closed the completed session.", error=True)
     report(f"Complete: {len(rows)} variables, {len(errors)} browse errors.")
     for path, node_id, error in errors:
         report(f"Browse error {path} ({node_id}): {error}", error=True)
@@ -356,7 +358,7 @@ async def main(args=None, password=None, progress=None, output_dir=None):
     for error, count in attribute_errors.items():
         report(f"Attribute error on {count} variables: {error}", error=True)
     target_dir = output_dir if output_dir is not None else BASE_DIR / "export"
-    tia_path, count, skipped, datatype, connection = write_tia_export(args.tia_template, args.tia_example_tag, rows, target_dir, connection_name)
+    tia_path, count, skipped, namespace, connection = write_tia_export(rows, target_dir, connection_name)
     report(f"TIA import workbook: {tia_path}")
     report(f"TIA tags: {count}; connection: {connection}")
     if args.limit and count >= args.limit:

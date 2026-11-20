@@ -13,18 +13,25 @@ The client browses metadata and reads only the attributes needed to classify var
 - Browse from the standard `Objects` node or a supplied starting NodeId.
 - Show live counts for visited nodes, variables, and eligible tags.
 - Apply a limit to eligible tags, or use `0` to browse without a tag limit.
-- Create a TIA HMI workbook from the bundled generic template or a user-selected workbook.
+- Generate the fixed 40-column TIA HMI import workbook directly in the application.
 - Run either the graphical application or the CLI.
 - Remember non-secret GUI settings between executable versions in a per-user external file.
-- Keep passwords and security acknowledgements in memory only for the current run.
+- Keep passwords and accepted server certificates in memory only for the current application session.
+- Confirm and adopt a self-signed server certificate by its SHA-256 fingerprint when no trusted server certificate file is selected.
+- Open project documentation or a prefilled GitHub issue directly from the GUI.
+
+The generated TIA HMI workbook has been tested with TIA Portal V21 and:
+
+- WinCC Unified Runtime PC
+- WinCC Unified Comfort Panel
 
 ## Requirements
 
 - Windows 10 or later for the supplied packaging script and release executable.
 - Python 3.10 or later to run from source. Python 3.12 is used by the release workflow.
 - An OPC UA server reachable from the computer running the application.
-- The bundled generic TIA workbook for Siemens S7 OPC UA, or a TIA Portal HMI workbook with a connected OPC UA example tag using a string NodeId.
-- For secure connections, client and server certificate files and the matching client private key.
+- A Siemens S7 OPC UA server exposing string NodeIds in the Siemens S7 namespace.
+- For secure connections, the GUI automatically creates a reusable client certificate and private key. Advanced users may supply their own pair. A verified server certificate file is optional after explicit fingerprint confirmation.
 
 Runtime dependencies are declared in `requirements.txt`: `asyncua`, `openpyxl`, and `PySide6`. Build-only dependencies, including PyInstaller, are in `requirements-build.txt`.
 
@@ -45,46 +52,56 @@ python .\opc_ua_export.py --help
 
 ## GUI
 
-Fields marked with `*` are required for an export. The application starts with the bundled generic Siemens S7 OPC UA workbook and its `ExampleTag` row selected. For another server namespace or TIA configuration, choose a workbook exported from that TIA project and enter the exact OPC UA example tag name. Choose an output folder; each successful run creates a timestamped `.xlsx` file there.
+Fields marked with `*` are required for an export. The TIA import workbook format is fixed in the application, so there is no workbook or example-tag field. Choose an output folder; each successful run creates a timestamped `.xlsx` file there.
 
-The GUI stores its non-secret fields in `%APPDATA%\OPC_UA_TIA_Export\settings.json`. This external per-user file is not replaced when a new executable is installed. It records the endpoint, connection name, username, security selection and certificate paths, workbook/example selection, output folder, start node, limit, and timeout. It never records the password, private key contents, certificate contents, or the acknowledgement for unencrypted communication. Delete the JSON file to reset remembered settings.
+The GUI stores its non-secret fields in `%APPDATA%\OPC_UA_TIA_Export\settings.json`. This external per-user file is not replaced when a new executable is installed. It records the endpoint, connection name, username, security selection and certificate paths, output folder, start node, limit, and timeout. It never records the password, accepted server-certificate fingerprints, private key contents, certificate contents, or the acknowledgement for unencrypted communication. A password stays available in the GUI for later export attempts until the application is closed. Delete the JSON file to reset remembered settings.
 
 The GUI supports these settings:
 
 | Setting | Required or optional | Details |
 | --- | --- | --- |
 | OPC UA endpoint | Required | Must use `opc.tcp://`; credentials in the endpoint URL are rejected. |
-| TIA HMI connection name | Required | Must already exist in the target TIA project. |
+| TIA HMI connection name | Required | Must already exist in the target TIA project. See [Find the HMI Connection Name](#find-the-hmi-connection-name). |
 | Authentication | Required choice | Enter a username and password, or select anonymous access. |
 | Channel security | Required choice | Select `Sign` or `SignAndEncrypt`, or explicitly acknowledge unencrypted communication. |
-| Security policy and certificates | Required for secure mode | Uses `Basic256Sha256`; select the client certificate, matching private key, and verified server certificate. |
-| TIA workbook | Required; generic workbook preselected | The bundled template targets the Siemens S7 OPC UA namespace. Select another workbook if your server uses a different namespace or project configuration. |
-| Example tag name | Required; `ExampleTag` preselected | Identifies the workbook row whose settings are used as the export template. |
+| Security policy and certificates | Required for secure mode | Uses `Basic256Sha256`. If the client certificate and private key are left empty, the application creates and reuses its OPC UA client identity in `%APPDATA%\OPC_UA_TIA_Export\client-identity`. Advanced users may select their own matching pair. A verified server certificate file is recommended. If it is omitted, the GUI displays the discovered certificate and requires explicit fingerprint confirmation before trusting it for that application session. |
 | Export folder | Required | Destination for the generated workbook. |
 | Starting NodeId | Optional | Defaults to `Objects`. |
 | Eligible tag limit | Optional | Defaults to `100`; `0` means no limit. |
 | Request timeout | Optional | Defaults to 10 seconds. |
 
-The status pane reports browse counts and errors while the browse runs. It also shows the output file path after a workbook is created.
+The status pane reports browse counts and errors while the browse runs. It also shows the output file path after a workbook is created. **Open README** opens the repository documentation. **Report issue on GitHub** opens a prefilled issue containing the application version and current Status log after a privacy confirmation. Nothing is submitted until you review the form and press the GitHub submit button.
 
 ![OPC UA to TIA HMI GUI](assets/screenshots/gui-main.png)
 
 ## Import in TIA Portal
 
-1. In TIA Portal, open the target HMI and use the HMI tag table import function for Excel files.
-2. Select the generated `tia_hmi_....xlsx` workbook.
-3. Keep the `Hmi Tags` worksheet selection and map/import the rows with TIA's supported HMI tag settings.
-4. Confirm that the tag names, `Connection`, `Address`, and data types match the intended PLC connection.
+1. In TIA Portal, open the target HMI and, in the `Tags` folder (1), open `All Tags` (2).
+2. Click the `Import Tags` button at the top of the center screen (3).
+3. Use the `Browse` button (4) to select the generated `tia_hmi_....xlsx` workbook, then click `Import` (5).
+4. Keep the `Hmi Tags` worksheet selection and map/import the rows with TIA's supported HMI tag settings.
+5. Confirm that the tag names, `Connection`, `Address`, and data types match the intended PLC connection.
 
-<!-- Add assets/screenshots/tia-hmi-tag-import.png to show the import workflow here. -->
+![TIA HMI tag import](assets/screenshots/tia-hmi-tag-import.png)
 
 ### Find the HMI Connection Name
 
 The exporter requires the existing HMI connection name exactly as it appears in TIA Portal. To find it, open the HMI project, inspect its device connections, and use the connection name assigned to the OPC UA endpoint. Do not use a PLC hardware name, HMI device name, or guessed placeholder; paste the exact value into the GUI or `--connection` option.
 
-<!-- Add assets/screenshots/tia-hmi-connection.png to show where to find the connection name. -->
+1. In TIA Portal, open the target HMI (1) and click `Connections` (2).
+2. Ensure an OPC UA connection is configured, then select it (3).
+3. Review the connection details (4, 5, and 6) and use them as the basic settings for the OPC UA to TIA HMI application.
+4. Copy the name from the connection list (3) and use it in the application.
+
+![TIA HMI connection name](assets/screenshots/tia-hmi-connection.png)
 
 Before using the imported tags in production, perform a small offline import test and verify names, addresses, types, and live values in the target TIA version.
+
+## Troubleshooting and Issue Reports
+
+When reporting a problem, include the application version, TIA Portal version, and HMI target type. Distinguish between a WinCC Unified Runtime PC, WinCC Unified Comfort Panel, or another HMI type. If the generated workbook fails during TIA Portal import, attach TIA Portal's generated `import.xml` to the issue.
+
+The GUI's **Report issue on GitHub** button preloads the current Status log, but you must personally review and remove endpoints, hostnames, usernames, certificate details, tag names, local paths, project information, and other sensitive data before submitting it.
 
 ## CLI
 
@@ -99,7 +116,7 @@ python .\opc_ua_export.py `
   --limit 200
 ```
 
-The password is requested interactively. The CLI defaults to `generic_tia_hmi_template.xlsx` and its `ExampleTag` row beside the application. This template targets Siemens S7 OPC UA. Use `--tia-template` and `--tia-example-tag` for another namespace or TIA configuration. The server certificate must be obtained through a trusted channel and verified before use. Protect the client private key and do not commit certificates or keys to source control.
+The password is requested interactively. The TIA workbook structure is fixed in the application and targets the Siemens S7 OPC UA namespace. CLI connections require client and server certificate files obtained or generated through a trusted process. The interactive GUI generates its own reusable client identity and can adopt a self-signed server certificate after explicit fingerprint confirmation. Protect private keys and do not commit certificates or keys to source control.
 
 For a trusted, isolated test network where the server supports no secure endpoint, unencrypted access must be explicitly enabled:
 
@@ -111,15 +128,13 @@ python .\opc_ua_export.py `
   --connection "HMI_Connection"
 ```
 
-Without `--connection`, the CLI prompts for the existing TIA connection name. Without `--user`, it prompts for a username unless `--anonymous` is selected. Use `--tia-template` and `--tia-example-tag` only to select a different workbook or example row. The endpoint may also be entered interactively.
+Without `--connection`, the CLI prompts for the existing TIA connection name. Without `--user`, it prompts for a username unless `--anonymous` is selected. The endpoint may also be entered interactively. No TIA template or example-tag option is needed.
 
 | Option | Required or optional | Description |
 | --- | --- | --- |
 | `--endpoint` | Optional prompt | OPC UA endpoint using the `opc.tcp` scheme. |
 | `--user` / `--anonymous` | Required choice | Username is prompted when `--user` is omitted; `--anonymous` selects anonymous access. |
 | `--security` / `--allow-insecure` | Required choice | Use `Basic256Sha256` with `Sign` or `SignAndEncrypt`, or explicitly allow an unencrypted channel. |
-| `--tia-template` | Optional | TIA workbook path; defaults to the bundled generic Siemens S7 template. |
-| `--tia-example-tag` | Optional | Example tag name; defaults to `ExampleTag`. |
 | `--connection` | Optional prompt | Existing TIA HMI connection name. |
 | `--start-node` | Optional | Starting NodeId; defaults to `Objects`. |
 | `--limit` | Optional | Maximum eligible tags; defaults to `100`, and `0` disables the limit. |
@@ -127,9 +142,9 @@ Without `--connection`, the CLI prompts for the existing TIA connection name. Wi
 
 ## TIA Export
 
-The selected workbook is read but never modified. The exporter uses its `Hmi Tags` worksheet and the selected example row as a template. It replaces the tag name, connection, address, and mapped data type fields while preserving the other example-row settings. Any `Substitute Value Usage` data rows are removed from the generated workbook. The bundled generic template is derived from a TIA workbook that was successfully imported during testing; its tag name, connection, NodeId, and workbook metadata are sanitized. Its 40-column layout and example-row settings are preserved.
+The application generates the fixed TIA `Hmi Tags` worksheet and `Substitute Value Usage` worksheet directly in code. Its 40-column layout and TIA default values are based on the previously validated import format. No input workbook or example row is read. For every exported tag, the application sets the name, connection, address, and mapped data type fields.
 
-Only scalar, readable variables with string NodeIds, a namespace matching the example tag, and one of the supported built-in types are exported. Arrays, strings, custom types, unsupported types, and variables without confirmed read access are skipped. This is intentionally a limited HMI export, not a complete OPC UA type exporter.
+Only scalar, readable variables with string NodeIds in the Siemens S7 OPC UA namespace and one of the supported built-in types are exported. Arrays, strings, custom types, unsupported types, and variables without confirmed read access are skipped. This is intentionally a limited HMI export, not a complete OPC UA type exporter.
 
 | OPC UA type | TIA `DataType` | TIA `HMI DataType` | `Length` in bytes |
 | --- | --- | --- | ---: |
@@ -145,12 +160,11 @@ The output tag name is derived from the string NodeId identifier. Characters not
 
 ## Security Notes
 
-- Prefer `SignAndEncrypt` and verify the server certificate before selecting it.
+- Prefer `SignAndEncrypt` and verify the server certificate before selecting it or accepting a discovered certificate fingerprint in the GUI.
 - Unencrypted OPC UA may expose credentials and traffic to other systems on the network. The CLI requires `--allow-insecure`; the GUI requires an explicit acknowledgement.
-- The GUI persists non-secret configuration under `%APPDATA%\OPC_UA_TIA_Export\settings.json`, including usernames, endpoint text, and local certificate paths. It never persists passwords, certificate/private-key contents, or the explicit unencrypted-communication acknowledgement. Treat the JSON file as user configuration and protect access to the Windows profile as appropriate.
+- The GUI persists non-secret configuration under `%APPDATA%\OPC_UA_TIA_Export\settings.json`, including usernames, endpoint text, and local certificate paths. It never persists passwords, accepted server-certificate fingerprints, certificate/private-key contents, or the explicit unencrypted-communication acknowledgement. Passwords and accepted fingerprints remain only in process memory until the application closes. Treat the JSON file as user configuration and protect access to the Windows profile as appropriate.
 - Browsing can create load on a controller. Start with a low eligible-tag limit and coordinate with the system owner before a full browse.
 - Treat generated workbooks as potentially sensitive: they contain server addresses and tag identifiers. Store and share them according to the site's data-handling rules.
-- Review any user-provided workbook before use. The application preserves selected template settings, so do not use an untrusted workbook.
 - TIA connection names are copied into output but cannot be checked against the target TIA project by this application.
 - This software is not a safety system and does not replace an engineering review or an offline TIA import test.
 
@@ -173,19 +187,19 @@ python -m pip install -r requirements-build.txt
 .\build_exe.ps1
 ```
 
-The result is `dist\OPC_UA_TIA_Export.exe` alongside `dist\generic_tia_hmi_template.xlsx`. The executable uses `assets\branding\icon.ico` as its Windows application icon. The standalone executable includes Python and the application dependencies; users do not need a separate Python installation. The generic workbook contains no PLC export data, certificates, or private keys. Each user supplies certificate files for secure connections.
+The result is `dist\OPC_UA_TIA_Export.exe` alongside `dist\LICENSE.md`. The executable uses `assets\branding\icon.ico` as its Windows application icon. The standalone executable includes Python and the application dependencies; users do not need a separate Python installation. No separate TIA workbook or manually supplied client certificate is needed. The GUI creates its client identity automatically when certificate fields are left empty.
 
 The release workflow builds on a clean Windows GitHub-hosted runner with Python 3.12. To reproduce it locally, use Windows and the dependency versions in the requirements files. The first launch of a PyInstaller one-file application can take a few seconds while bundled files are extracted.
 
 ## GitHub Releases
 
-Pushing a version tag matching `v*` runs `.github/workflows/release.yml`. The workflow runs the test suite, creates a clean Windows GUI executable, writes SHA-256 checksums, and publishes the executable, generic TIA workbook, and checksum file to a GitHub Release. It does not package certificates, keys, or PLC export data. The generic workbook targets Siemens S7 OPC UA; users with another namespace or project configuration can select their own TIA export. If a tag-triggered run fails and the workflow is corrected on `main`, retry it without moving the tag with `gh workflow run release.yml --ref main -f release_tag=v0.1.1`.
+Pushing a version tag matching `v*` runs `.github/workflows/release.yml`. The workflow runs the test suite, creates a clean Windows GUI executable, writes SHA-256 checksums, and publishes the executable, license, and checksum file to a GitHub Release. It does not package certificates, keys, or PLC export data. The executable generates the fixed Siemens S7 TIA import workbook directly. If a tag-triggered run fails and the workflow is corrected on `main`, retry it without moving the tag with `gh workflow run release.yml --ref main -f release_tag=v0.2.0`.
 
 To create a release after reviewing and committing the source changes:
 
 ```powershell
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 See `CHANGELOG.md` for the version history.
