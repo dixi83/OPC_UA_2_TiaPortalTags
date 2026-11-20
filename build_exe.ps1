@@ -19,6 +19,7 @@ if (Test-Path $portablePython) {
     --noconfirm `
     --onefile `
     --windowed `
+    --icon (Join-Path $root "icon.ico") `
     --name OPC_UA_TIA_Export `
     --distpath (Join-Path $root "dist") `
     --workpath $buildWork `

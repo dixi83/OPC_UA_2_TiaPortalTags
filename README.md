@@ -1,3 +1,5 @@
+![OPC UA to TIA Portal HMI Tag Export](banner.png)
+
 # OPC UA to TIA Portal HMI Tags
 
 **GitHub description:** Browse OPC UA address spaces and export supported scalar variables to Siemens TIA Portal HMI tag workbooks.
@@ -13,7 +15,8 @@ The client browses metadata and reads only the attributes needed to classify var
 - Apply a limit to eligible tags, or use `0` to browse without a tag limit.
 - Create a TIA HMI workbook from the bundled generic template or a user-selected workbook.
 - Run either the graphical application or the CLI.
-- Keep credentials in memory only for the current run; passwords are never command-line arguments or saved by the application.
+- Remember non-secret GUI settings between executable versions in a per-user external file.
+- Keep passwords and security acknowledgements in memory only for the current run.
 
 ## Requirements
 
@@ -43,6 +46,8 @@ python .\opc_ua_export.py --help
 ## GUI
 
 Fields marked with `*` are required for an export. The application starts with the bundled generic Siemens S7 OPC UA workbook and its `ExampleTag` row selected. For another server namespace or TIA configuration, choose a workbook exported from that TIA project and enter the exact OPC UA example tag name. Choose an output folder; each successful run creates a timestamped `.xlsx` file there.
+
+The GUI stores its non-secret fields in `%APPDATA%\OPC_UA_TIA_Export\settings.json`. This external per-user file is not replaced when a new executable is installed. It records the endpoint, connection name, username, security selection and certificate paths, workbook/example selection, output folder, start node, limit, and timeout. It never records the password, private key contents, certificate contents, or the acknowledgement for unencrypted communication. Delete the JSON file to reset remembered settings.
 
 The GUI supports these settings:
 
@@ -123,7 +128,7 @@ The output tag name is derived from the string NodeId identifier. Characters not
 
 - Prefer `SignAndEncrypt` and verify the server certificate before selecting it.
 - Unencrypted OPC UA may expose credentials and traffic to other systems on the network. The CLI requires `--allow-insecure`; the GUI requires an explicit acknowledgement.
-- The application does not persist usernames, passwords, private keys, certificates, or endpoint configuration. Passwords are not placed in process arguments.
+- The GUI persists non-secret configuration under `%APPDATA%\OPC_UA_TIA_Export\settings.json`, including usernames, endpoint text, and local certificate paths. It never persists passwords, certificate/private-key contents, or the explicit unencrypted-communication acknowledgement. Treat the JSON file as user configuration and protect access to the Windows profile as appropriate.
 - Browsing can create load on a controller. Start with a low eligible-tag limit and coordinate with the system owner before a full browse.
 - Treat generated workbooks as potentially sensitive: they contain server addresses and tag identifiers. Store and share them according to the site's data-handling rules.
 - Review any user-provided workbook before use. The application preserves selected template settings, so do not use an untrusted workbook.
@@ -149,20 +154,22 @@ python -m pip install -r requirements-build.txt
 .\build_exe.ps1
 ```
 
-The result is `dist\OPC_UA_TIA_Export.exe` alongside `dist\generic_tia_hmi_template.xlsx`. The standalone executable includes Python and the application dependencies; users do not need a separate Python installation. The generic workbook contains no PLC export data, certificates, or private keys. Each user supplies certificate files for secure connections.
+The result is `dist\OPC_UA_TIA_Export.exe` alongside `dist\generic_tia_hmi_template.xlsx`. The executable uses the project's `icon.ico` as its Windows application icon. The standalone executable includes Python and the application dependencies; users do not need a separate Python installation. The generic workbook contains no PLC export data, certificates, or private keys. Each user supplies certificate files for secure connections.
 
 The release workflow builds on a clean Windows GitHub-hosted runner with Python 3.12. To reproduce it locally, use Windows and the dependency versions in the requirements files. The first launch of a PyInstaller one-file application can take a few seconds while bundled files are extracted.
 
 ## GitHub Releases
 
-Pushing a version tag matching `v*` runs `.github/workflows/release.yml`. The workflow runs the test suite, creates a clean Windows GUI executable, writes SHA-256 checksums, and publishes the executable, generic TIA workbook, and checksum file to a GitHub Release. It does not package certificates, keys, or PLC export data. The generic workbook targets Siemens S7 OPC UA; users with another namespace or project configuration can select their own TIA export. If a tag-triggered run fails and the workflow is corrected on `main`, retry it without moving the tag with `gh workflow run release.yml --ref main -f release_tag=v0.1.0`.
+Pushing a version tag matching `v*` runs `.github/workflows/release.yml`. The workflow runs the test suite, creates a clean Windows GUI executable, writes SHA-256 checksums, and publishes the executable, generic TIA workbook, and checksum file to a GitHub Release. It does not package certificates, keys, or PLC export data. The generic workbook targets Siemens S7 OPC UA; users with another namespace or project configuration can select their own TIA export. If a tag-triggered run fails and the workflow is corrected on `main`, retry it without moving the tag with `gh workflow run release.yml --ref main -f release_tag=v0.1.1`.
 
 To create a release after reviewing and committing the source changes:
 
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
+
+See `CHANGELOG.md` for the version history.
 
 GitHub Actions requires `contents: write` permission for the workflow token. Release assets should be verified against the published `SHA256SUMS.txt` before use.
 

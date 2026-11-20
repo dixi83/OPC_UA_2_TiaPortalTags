@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 from asyncua import Client, ua
 from openpyxl import load_workbook
 
+from version import __version__
+
 
 BASE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 DEFAULT_TEMPLATE = BASE_DIR / "generic_tia_hmi_template.xlsx"
@@ -273,6 +275,7 @@ def write_tia_export(template_path, example_name, rows, output_dir, connection_n
 def parse_args():
     """Build the CLI parser; workbook and example selection are intentionally explicit."""
     parser = argparse.ArgumentParser(description="Export OPC UA variables to a TIA HMI workbook.")
+    parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--endpoint", help="OPC UA endpoint, for example opc.tcp://host:4840")
     authentication = parser.add_mutually_exclusive_group()
     authentication.add_argument("--user", help="Username; prompted when omitted")

@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
 )
 
 from opc_ua_export import BASE_DIR, DEFAULT_TEMPLATE, main as run_export
+from settings_store import default_settings_path, load_settings, save_settings
+from version import __version__
 
 
 class ExportWorker(QThread):
@@ -65,12 +67,13 @@ class ExportWorker(QThread):
 class ExportWindow(QMainWindow):
     """Collect validated export settings and show live OPC UA browse progress."""
 
-    def __init__(self):
+    def __init__(self, settings_file: Path | None = None):
         super().__init__()
-        self.setWindowTitle("OPC UA to TIA HMI")
+        self.setWindowTitle(f"OPC UA to TIA HMI {__version__}")
         self.resize(930, 900)
         self.setMinimumSize(780, 760)
         self.worker = None
+        self.settings_file = Path(settings_file) if settings_file is not None else default_settings_path()
 
         self.endpoint = QLineEdit()
         self.endpoint.setPlaceholderText("opc.tcp://host:4840")
@@ -113,6 +116,7 @@ class ExportWindow(QMainWindow):
         self.start_button.setObjectName("primaryButton")
         self.start_button.clicked.connect(self._start_export)
 
+        self._restore_settings()
         self._build_layout()
         self.anonymous.toggled.connect(self._update_auth_state)
         self.security_mode.currentTextChanged.connect(self._update_security_state)
@@ -127,6 +131,10 @@ class ExportWindow(QMainWindow):
         title = QLabel("OPC UA to TIA HMI")
         title.setObjectName("pageTitle")
         outer.addWidget(title)
+        settings_path_label = QLabel(f"Settings file: {self.settings_file}")
+        settings_path_label.setObjectName("settingsPath")
+        settings_path_label.setWordWrap(True)
+        outer.addWidget(settings_path_label)
         outer.addWidget(QLabel("* required  |  Other fields are optional; populated values are defaults."))
 
         connection_group = QGroupBox("Connection")
@@ -187,6 +195,7 @@ class ExportWindow(QMainWindow):
             " border: 1px solid #aebbb3; border-radius: 3px; padding: 5px; }"
             "QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border: 1px solid #147d69; }"
             "QLabel#pageTitle { color: #173d35; font-size: 20px; font-weight: 700; }"
+            "QLabel#settingsPath { color: #5d6b64; font-size: 10px; }"
             "QLabel#status { color: #173d35; font-weight: 600; }"
             "QPushButton { padding: 7px 12px; }"
             "QPushButton#primaryButton { color: white; background: #147d69; border: 0; border-radius: 3px;"
@@ -230,6 +239,62 @@ class ExportWindow(QMainWindow):
         path = QFileDialog.getExistingDirectory(self, "Choose export folder", self.output_dir.text())
         if path:
             self.output_dir.setText(path)
+
+    def _restore_settings(self):
+        """Populate GUI fields from the per-user settings whitelist."""
+        settings = load_settings(self.settings_file)
+        text_fields = {
+            "endpoint": self.endpoint,
+            "connection": self.connection,
+            "username": self.username,
+            "client_cert": self.client_cert,
+            "client_key": self.client_key,
+            "server_cert": self.server_cert,
+            "template": self.template,
+            "example_tag": self.example_tag,
+            "output_dir": self.output_dir,
+            "start_node": self.start_node,
+        }
+        for key, field in text_fields.items():
+            if key in settings:
+                field.setText(settings[key])
+        if "anonymous" in settings:
+            self.anonymous.setChecked(settings["anonymous"])
+        if settings.get("security_mode") in {"Unencrypted", "Sign", "SignAndEncrypt"}:
+            self.security_mode.setCurrentText(settings["security_mode"])
+        if settings.get("policy") == "Basic256Sha256":
+            self.policy.setCurrentText(settings["policy"])
+        if "limit" in settings:
+            self.limit.setValue(min(settings["limit"], self.limit.maximum()))
+        if "timeout" in settings:
+            self.timeout.setValue(min(max(settings["timeout"], self.timeout.minimum()), self.timeout.maximum()))
+
+    def _settings_data(self):
+        """Return the supported non-secret values that may be written to disk."""
+        return {
+            "endpoint": self.endpoint.text().strip(),
+            "connection": self.connection.text().strip(),
+            "anonymous": self.anonymous.isChecked(),
+            "username": self.username.text().strip(),
+            "security_mode": self.security_mode.currentText(),
+            "policy": self.policy.currentText(),
+            "client_cert": self.client_cert.text().strip(),
+            "client_key": self.client_key.text().strip(),
+            "server_cert": self.server_cert.text().strip(),
+            "template": self.template.text().strip(),
+            "example_tag": self.example_tag.text().strip(),
+            "output_dir": self.output_dir.text().strip(),
+            "start_node": self.start_node.text().strip(),
+            "limit": self.limit.value(),
+            "timeout": self.timeout.value(),
+        }
+
+    def _save_settings(self):
+        """Persist current non-secret fields without interrupting an export."""
+        try:
+            save_settings(self._settings_data(), self.settings_file)
+        except OSError as exc:
+            self.log.appendPlainText(f"Could not save settings: {exc}")
 
     def _update_auth_state(self, anonymous=None):
         is_anonymous = self.anonymous.isChecked() if anonymous is None else anonymous
@@ -306,6 +371,7 @@ class ExportWindow(QMainWindow):
         except ValueError as exc:
             QMessageBox.warning(self, "Check input", str(exc))
             return
+        self._save_settings()
         self.start_button.setEnabled(False)
         self.activity.setRange(0, 0)
         self.status.setText("Connecting to OPC UA server...")
@@ -341,6 +407,7 @@ class ExportWindow(QMainWindow):
             QMessageBox.information(self, "Export in progress", "Close this window after the export completes.")
             event.ignore()
             return
+        self._save_settings()
         event.accept()
 
 

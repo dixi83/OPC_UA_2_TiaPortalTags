@@ -27,7 +27,7 @@ class ExportWindowTest(unittest.TestCase):
             sheet.append(["example", "connection", "Int32", "DInt", 4, "Absolute access", "ns=urn:test;s=example"])
             workbook.save(workbook_path)
 
-            window = ExportWindow()
+            window = ExportWindow(Path(directory) / "settings.json")
             self.addCleanup(window.close)
             window.endpoint.setText("opc.tcp://localhost:4840")
             window.connection.setText("test_connection")
@@ -47,6 +47,49 @@ class ExportWindowTest(unittest.TestCase):
             self.assertEqual(args.timeout, 10)
             self.assertEqual(password, "")
             self.assertEqual(output_directory.name, "export")
+
+    def test_settings_round_trip_excludes_secrets_and_unsafe_acknowledgement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings_file = Path(directory) / "settings.json"
+            window = ExportWindow(settings_file)
+            window.endpoint.setText("opc.tcp://localhost:4840")
+            window.connection.setText("remembered_connection")
+            window.username.setText("remembered_user")
+            window.password.setText("must_not_be_saved")
+            window.security_mode.setCurrentText("Unencrypted")
+            window.security_ack.setChecked(True)
+            window.start_node.setText("ns=2;s=Machine")
+            window.limit.setValue(321)
+            window.timeout.setValue(18.5)
+            window.output_dir.setText(str(Path(directory) / "output"))
+            window._save_settings()
+
+            raw_settings = settings_file.read_text(encoding="utf-8")
+            self.assertNotIn("must_not_be_saved", raw_settings)
+            self.assertNotIn("password", raw_settings)
+            self.assertNotIn("allow_insecure", raw_settings)
+            window.close()
+
+            restored = ExportWindow(settings_file)
+            self.addCleanup(restored.close)
+            self.assertEqual(restored.endpoint.text(), "opc.tcp://localhost:4840")
+            self.assertEqual(restored.connection.text(), "remembered_connection")
+            self.assertEqual(restored.username.text(), "remembered_user")
+            self.assertEqual(restored.start_node.text(), "ns=2;s=Machine")
+            self.assertEqual(restored.limit.value(), 321)
+            self.assertEqual(restored.timeout.value(), 18.5)
+            self.assertEqual(restored.password.text(), "")
+            self.assertFalse(restored.security_ack.isChecked())
+
+    def test_corrupt_settings_file_does_not_break_gui_startup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings_file = Path(directory) / "settings.json"
+            settings_file.write_text("{not valid json", encoding="utf-8")
+            window = ExportWindow(settings_file)
+            self.addCleanup(window.close)
+            self.assertEqual(window.limit.value(), 100)
+            self.assertEqual(window.timeout.value(), 10)
+            self.assertEqual(window.example_tag.text(), "ExampleTag")
 
     def test_bundled_generic_workbook_is_sanitized_and_uses_tia_schema(self):
         self.assertEqual(DEFAULT_TEMPLATE, BASE_DIR / "generic_tia_hmi_template.xlsx")
