@@ -182,6 +182,6 @@ GitHub Actions requires `contents: write` permission for the workflow token. Rel
 
 ## License
 
-This project is **source-available**, not Open Source. The [Source-Available Internal-Use License 1.0](LICENSE.md) permits personal and professional internal use, including use inside a commercial organization, but prohibits selling, sublicensing, monetizing, distributing, or redistributing the Software or modified versions. It does not prohibit selling your own products or services created with the Software; it prohibits charging for, packaging, or making the Software itself available.
+This project is **source-available**, not Open Source. The [Source-Available Non-Commercial Redistribution License 1.0](LICENSE.md) permits personal and professional use, plus free redistribution of original or modified versions when the license, attribution, and complete corresponding source code are included. It prohibits charging for, monetizing, bundling into paid offerings, or otherwise earning revenue from the Software or access to it. The user may sell their own products and services created with the Software when the Software itself is not the paid or distributed part of that offering.
 
 The license applies to all published project versions, including `v0.1.0` and `v0.1.1`, their source, binaries, and release assets, unless a later release explicitly states different terms. Third-party packages remain governed by their own licenses.

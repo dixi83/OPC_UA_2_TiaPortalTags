@@ -6,7 +6,7 @@ All notable project changes are documented in this file.
 
 ### Added
 
-- Added the Source-Available Internal-Use License 1.0. It permits internal professional use but prohibits monetization and redistribution of the Software, including modified copies, and applies to versions v0.1.0 and v0.1.1.
+- Added the Source-Available Non-Commercial Redistribution License 1.0. It permits professional use and free redistribution of original or modified versions with license/source attribution, but prohibits charging for or monetizing the Software. It applies to versions v0.1.0 and v0.1.1.
 
 ## 0.1.1 - 2026-11-20
 
