@@ -1,4 +1,4 @@
-![OPC UA to TIA Portal HMI Tag Export](banner.png)
+![OPC UA to TIA Portal HMI Tag Export](assets/branding/banner.png)
 
 # OPC UA to TIA Portal HMI Tags
 
@@ -66,6 +66,25 @@ The GUI supports these settings:
 | Request timeout | Optional | Defaults to 10 seconds. |
 
 The status pane reports browse counts and errors while the browse runs. It also shows the output file path after a workbook is created.
+
+![OPC UA to TIA HMI GUI](assets/screenshots/gui-main.png)
+
+## Import in TIA Portal
+
+1. In TIA Portal, open the target HMI and use the HMI tag table import function for Excel files.
+2. Select the generated `tia_hmi_....xlsx` workbook.
+3. Keep the `Hmi Tags` worksheet selection and map/import the rows with TIA's supported HMI tag settings.
+4. Confirm that the tag names, `Connection`, `Address`, and data types match the intended PLC connection.
+
+<!-- Add assets/screenshots/tia-hmi-tag-import.png to show the import workflow here. -->
+
+### Find the HMI Connection Name
+
+The exporter requires the existing HMI connection name exactly as it appears in TIA Portal. To find it, open the HMI project, inspect its device connections, and use the connection name assigned to the OPC UA endpoint. Do not use a PLC hardware name, HMI device name, or guessed placeholder; paste the exact value into the GUI or `--connection` option.
+
+<!-- Add assets/screenshots/tia-hmi-connection.png to show where to find the connection name. -->
+
+Before using the imported tags in production, perform a small offline import test and verify names, addresses, types, and live values in the target TIA version.
 
 ## CLI
 
@@ -154,7 +173,7 @@ python -m pip install -r requirements-build.txt
 .\build_exe.ps1
 ```
 
-The result is `dist\OPC_UA_TIA_Export.exe` alongside `dist\generic_tia_hmi_template.xlsx`. The executable uses the project's `icon.ico` as its Windows application icon. The standalone executable includes Python and the application dependencies; users do not need a separate Python installation. The generic workbook contains no PLC export data, certificates, or private keys. Each user supplies certificate files for secure connections.
+The result is `dist\OPC_UA_TIA_Export.exe` alongside `dist\generic_tia_hmi_template.xlsx`. The executable uses `assets\branding\icon.ico` as its Windows application icon. The standalone executable includes Python and the application dependencies; users do not need a separate Python installation. The generic workbook contains no PLC export data, certificates, or private keys. Each user supplies certificate files for secure connections.
 
 The release workflow builds on a clean Windows GitHub-hosted runner with Python 3.12. To reproduce it locally, use Windows and the dependency versions in the requirements files. The first launch of a PyInstaller one-file application can take a few seconds while bundled files are extracted.
 

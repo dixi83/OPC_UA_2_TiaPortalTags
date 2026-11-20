@@ -7,6 +7,12 @@ All notable project changes are documented in this file.
 ### Added
 
 - Added the Source-Available Non-Commercial Redistribution License 1.0. It permits professional use and free redistribution of original or modified versions with license/source attribution, but prohibits charging for or monetizing the Software. It applies to versions v0.1.0 and v0.1.1.
+- Added dedicated `assets/branding/` and `assets/screenshots/` directories for project imagery.
+- Added a sanitized GUI screenshot to the README.
+
+### Changed
+
+- Fixed the Qt window/taskbar icon in packaged one-file builds by bundling and applying the ICO at runtime.
 
 ## 0.1.1 - 2026-11-20
 

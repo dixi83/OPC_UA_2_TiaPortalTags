@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -29,6 +31,12 @@ from PySide6.QtWidgets import (
 from opc_ua_export import BASE_DIR, DEFAULT_TEMPLATE, main as run_export
 from settings_store import default_settings_path, load_settings, save_settings
 from version import __version__
+
+
+def application_icon() -> QIcon:
+    """Load the bundled ICO in source and one-file PyInstaller environments."""
+    resource_root = Path(getattr(sys, "_MEIPASS", BASE_DIR))
+    return QIcon(str(resource_root / "assets" / "branding" / "icon.ico"))
 
 
 class ExportWorker(QThread):
@@ -414,7 +422,9 @@ class ExportWindow(QMainWindow):
 def main():
     app = QApplication([])
     app.setStyle("Fusion")
+    app.setWindowIcon(application_icon())
     window = ExportWindow()
+    window.setWindowIcon(application_icon())
     window.show()
     app.exec()
 

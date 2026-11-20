@@ -36,7 +36,7 @@ jobs:
 
       - name: Build standalone GUI
         shell: pwsh
-        run: python -m PyInstaller --clean --noconfirm --onefile --windowed --icon "$env:GITHUB_WORKSPACE\icon.ico" --name OPC_UA_TIA_Export --distpath dist --workpath "$env:RUNNER_TEMP\opc-ua-export-build" --specpath "$env:RUNNER_TEMP\opc-ua-export-spec" opc_ua_export_app.py
+        run: python -m PyInstaller --clean --noconfirm --onefile --windowed --icon "$env:GITHUB_WORKSPACE\assets\branding\icon.ico" --add-data "$env:GITHUB_WORKSPACE\assets\branding\icon.ico;assets\branding" --name OPC_UA_TIA_Export --distpath dist --workpath "$env:RUNNER_TEMP\opc-ua-export-build" --specpath "$env:RUNNER_TEMP\opc-ua-export-spec" opc_ua_export_app.py
 
       - name: Add release documents
         run: |

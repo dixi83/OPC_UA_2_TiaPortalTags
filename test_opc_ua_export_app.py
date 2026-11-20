@@ -9,7 +9,7 @@ from openpyxl import Workbook, load_workbook
 from PySide6.QtWidgets import QApplication
 
 from opc_ua_export import BASE_DIR, DEFAULT_TEMPLATE
-from opc_ua_export_app import ExportWindow
+from opc_ua_export_app import ExportWindow, application_icon
 
 
 class ExportWindowTest(unittest.TestCase):
@@ -90,6 +90,10 @@ class ExportWindowTest(unittest.TestCase):
             self.assertEqual(window.limit.value(), 100)
             self.assertEqual(window.timeout.value(), 10)
             self.assertEqual(window.example_tag.text(), "ExampleTag")
+
+    def test_application_icon_resolves_from_assets(self):
+        self.assertTrue((BASE_DIR / "assets" / "branding" / "icon.ico").is_file())
+        self.assertFalse(application_icon().isNull())
 
     def test_bundled_generic_workbook_is_sanitized_and_uses_tia_schema(self):
         self.assertEqual(DEFAULT_TEMPLATE, BASE_DIR / "generic_tia_hmi_template.xlsx")

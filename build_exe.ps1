@@ -19,7 +19,8 @@ if (Test-Path $portablePython) {
     --noconfirm `
     --onefile `
     --windowed `
-    --icon (Join-Path $root "icon.ico") `
+    --icon (Join-Path $root "assets\branding\icon.ico") `
+    --add-data ("$(Join-Path $root 'assets\branding\icon.ico');assets\branding") `
     --name OPC_UA_TIA_Export `
     --distpath (Join-Path $root "dist") `
     --workpath $buildWork `
