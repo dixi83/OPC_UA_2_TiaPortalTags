@@ -38,13 +38,15 @@ jobs:
         shell: pwsh
         run: python -m PyInstaller --clean --noconfirm --onefile --windowed --icon "$env:GITHUB_WORKSPACE\icon.ico" --name OPC_UA_TIA_Export --distpath dist --workpath "$env:RUNNER_TEMP\opc-ua-export-build" --specpath "$env:RUNNER_TEMP\opc-ua-export-spec" opc_ua_export_app.py
 
-      - name: Add generic TIA workbook
-        run: Copy-Item generic_tia_hmi_template.xlsx dist/generic_tia_hmi_template.xlsx
+      - name: Add release documents
+        run: |
+          Copy-Item generic_tia_hmi_template.xlsx dist/generic_tia_hmi_template.xlsx
+          Copy-Item LICENSE.md dist/LICENSE.md
 
       - name: Create SHA-256 checksum
         shell: pwsh
         run: |
-          $assets = @('OPC_UA_TIA_Export.exe', 'generic_tia_hmi_template.xlsx')
+          $assets = @('OPC_UA_TIA_Export.exe', 'generic_tia_hmi_template.xlsx', 'LICENSE.md')
           $lines = foreach ($asset in $assets) {
             $hash = (Get-FileHash "dist/$asset" -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $asset"
@@ -56,4 +58,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         shell: pwsh
-        run: gh release create "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" --title "$env:RELEASE_TAG" --generate-notes dist/OPC_UA_TIA_Export.exe dist/generic_tia_hmi_template.xlsx dist/SHA256SUMS.txt
+        run: gh release create "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" --title "$env:RELEASE_TAG" --generate-notes dist/OPC_UA_TIA_Export.exe dist/generic_tia_hmi_template.xlsx dist/LICENSE.md dist/SHA256SUMS.txt

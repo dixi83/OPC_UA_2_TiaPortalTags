@@ -31,4 +31,5 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Copy-Item -LiteralPath (Join-Path $root "generic_tia_hmi_template.xlsx") -Destination (Join-Path $root "dist\generic_tia_hmi_template.xlsx") -Force
-Write-Host "GUI executable created: $(Join-Path $root 'dist\OPC_UA_TIA_Export.exe')"
+Copy-Item -LiteralPath (Join-Path $root "LICENSE.md") -Destination (Join-Path $root "dist\LICENSE.md") -Force
+Write-Host "GUI executable and license created in dist"
