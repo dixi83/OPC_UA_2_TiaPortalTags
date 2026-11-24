@@ -190,7 +190,7 @@ async def collect(client, start_node, limit=None, eligible=None, progress=None):
 def tag_name(identifier):
     """Remove NodeId quotes, join quoted segments, and sanitize unsupported characters."""
     name = identifier.replace('"."', '_').replace('"', '')
-    return name.translate(str.maketrans({character: "_" for character in "#$*%/:?[]`~"}))
+    return name.translate(str.maketrans({character: "_" for character in "#$*%./:?[]`~"}))
 
 
 def skip_reason(record, namespace):

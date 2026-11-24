@@ -12,6 +12,7 @@ The client browses metadata and reads only the attributes needed to classify var
 
 - Browse from the standard `Objects` node or a supplied starting NodeId.
 - Show live counts for visited nodes, variables, and eligible tags.
+- Copy the folder of the most recently generated workbook or open it in File Explorer.
 - Apply a limit to eligible tags, or use `0` to browse without a tag limit.
 - Generate the fixed 40-column TIA HMI import workbook directly in the application.
 - Run either the graphical application or the CLI.
@@ -156,7 +157,7 @@ Only scalar, readable variables with string NodeIds in the Siemens S7 OPC UA nam
 | Float | Float | Real | 4 |
 | Double | Double | LReal | 8 |
 
-The output tag name is derived from the string NodeId identifier. Characters not accepted by TIA are replaced with underscores; the original NodeId address is preserved. If normalization creates duplicate names, the export stops rather than silently overwriting a tag.
+The output tag name is derived from the string NodeId identifier. Characters not accepted by TIA, including periods, are replaced with underscores; the original NodeId address is preserved. If normalization creates duplicate names, the export stops rather than silently overwriting a tag.
 
 ## Security Notes
 

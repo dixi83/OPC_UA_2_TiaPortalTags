@@ -2,6 +2,16 @@
 
 All notable project changes are documented in this file.
 
+## 0.2.1 - 2026-11-24
+
+### Fixed
+
+- Restored replacement of periods with underscores in generated TIA tag names.
+
+### Added
+
+- Added buttons to copy or open the folder containing the latest generated workbook.
+
 ## 0.2.0 - 2026-11-20
 
 ### Added

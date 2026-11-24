@@ -251,6 +251,30 @@ class ExportWindowTest(unittest.TestCase):
                 self.assertIn(__version__, opened)
                 self.assertEqual(open_url.call_count, 2)
 
+    def test_latest_export_folder_actions_use_created_workbook(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workbook = root / "tia_hmi_latest.xlsx"
+            workbook.write_bytes(b"test workbook")
+            window = ExportWindow(root / "settings.json")
+            self.addCleanup(window.close)
+
+            self.assertFalse(window.copy_export_path_button.isEnabled())
+            self.assertFalse(window.open_export_folder_button.isEnabled())
+
+            window._show_progress(f"TIA import workbook: {workbook}")
+            window._export_completed(0)
+
+            self.assertTrue(window.copy_export_path_button.isEnabled())
+            self.assertTrue(window.open_export_folder_button.isEnabled())
+
+            window._copy_latest_export_folder()
+            self.assertEqual(QApplication.clipboard().text(), str(root))
+
+            with patch("opc_ua_export_app.QProcess.startDetached", return_value=True) as start_process:
+                window._open_latest_export_folder()
+            start_process.assert_called_once_with("explorer.exe", ["/select,", str(workbook.resolve())])
+
     def test_tia_workbook_format_is_fixed_in_source(self):
         self.assertEqual(len(TIA_HEADERS), 40)
         self.assertEqual(TIA_HEADERS[:9], [

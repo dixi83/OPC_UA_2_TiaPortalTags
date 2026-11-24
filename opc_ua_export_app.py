@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 from asyncua.crypto import cert_gen
 from cryptography.hazmat.primitives import hashes
 from cryptography.x509.oid import ExtendedKeyUsageOID
-from PySide6.QtCore import QThread, Signal, QUrl
+from PySide6.QtCore import QProcess, QThread, Signal, QUrl
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -182,6 +182,7 @@ class ExportWindow(QMainWindow):
         self.resize(930, 900)
         self.setMinimumSize(780, 760)
         self.worker = None
+        self.latest_export_path = None
         self.accepted_server_certificates = set()
         self.settings_file = Path(settings_file) if settings_file is not None else default_settings_path()
 
@@ -226,6 +227,12 @@ class ExportWindow(QMainWindow):
         self.readme_button.clicked.connect(self._open_readme)
         self.issue_button = QPushButton("Report issue on GitHub")
         self.issue_button.clicked.connect(self._open_issue)
+        self.copy_export_path_button = QPushButton("Copy latest export folder")
+        self.copy_export_path_button.setEnabled(False)
+        self.copy_export_path_button.clicked.connect(self._copy_latest_export_folder)
+        self.open_export_folder_button = QPushButton("Open latest export folder")
+        self.open_export_folder_button.setEnabled(False)
+        self.open_export_folder_button.clicked.connect(self._open_latest_export_folder)
 
         self._restore_settings()
         self._build_layout()
@@ -297,6 +304,11 @@ class ExportWindow(QMainWindow):
         status_line.addWidget(self.status, 1)
         status_line.addWidget(self.activity)
         status_layout.addLayout(status_line)
+        export_actions = QHBoxLayout()
+        export_actions.addWidget(self.copy_export_path_button)
+        export_actions.addWidget(self.open_export_folder_button)
+        export_actions.addStretch(1)
+        status_layout.addLayout(export_actions)
         status_layout.addWidget(self.log, 1)
         outer.addWidget(status_group, 1)
         actions = QHBoxLayout()
@@ -496,6 +508,9 @@ class ExportWindow(QMainWindow):
             return
         self._save_settings()
         self.start_button.setEnabled(False)
+        self.latest_export_path = None
+        self.copy_export_path_button.setEnabled(False)
+        self.open_export_folder_button.setEnabled(False)
         self.activity.setRange(0, 0)
         self.status.setText("Connecting to OPC UA server...")
         self.log.appendPlainText("Export started")
@@ -524,6 +539,9 @@ class ExportWindow(QMainWindow):
         self.log.appendPlainText(message)
         if message.startswith(("Browsed:", "Found:")):
             self.status.setText(message)
+        prefix = "TIA import workbook: "
+        if message.startswith(prefix):
+            self.latest_export_path = Path(message[len(prefix):].strip()).resolve()
 
     def _open_readme(self):
         QDesktopServices.openUrl(QUrl(f"{REPOSITORY_URL}/blob/main/README.md"))
@@ -544,16 +562,33 @@ class ExportWindow(QMainWindow):
         QApplication.clipboard().setText(issue_url)
         QDesktopServices.openUrl(QUrl(issue_url))
 
+    def _copy_latest_export_folder(self):
+        if self.latest_export_path is None:
+            return
+        QApplication.clipboard().setText(str(self.latest_export_path.parent))
+        self.status.setText("Latest export folder copied to clipboard")
+
+    def _open_latest_export_folder(self):
+        if self.latest_export_path is None:
+            return
+        if not QProcess.startDetached("explorer.exe", ["/select,", str(self.latest_export_path)]):
+            QMessageBox.warning(self, "Could not open File Explorer", "Windows File Explorer could not be started.")
+
     def _export_completed(self, exit_code):
         self.activity.setRange(0, 1)
         self.activity.setValue(0)
         self.start_button.setEnabled(True)
+        export_available = self.latest_export_path is not None and self.latest_export_path.is_file()
+        self.copy_export_path_button.setEnabled(export_available)
+        self.open_export_folder_button.setEnabled(export_available)
         self.status.setText("Export complete" if exit_code == 0 else f"Export complete with warnings (exit code {exit_code})")
 
     def _export_failed(self, error):
         self.activity.setRange(0, 1)
         self.activity.setValue(0)
         self.start_button.setEnabled(True)
+        self.copy_export_path_button.setEnabled(False)
+        self.open_export_folder_button.setEnabled(False)
         self.status.setText("Export stopped due to an error")
         self.log.appendPlainText("Error:\n" + error.rstrip())
         QMessageBox.critical(self, "Export failed", error.splitlines()[0] if error else "Unknown export error")

@@ -24,17 +24,17 @@ class TiaExportTest(unittest.TestCase):
             result = load_workbook(output, data_only=True)
             sheet_rows = list(result["Hmi Tags"].values)
             self.assertEqual(sheet_rows[0], tuple(TIA_HEADERS))
-            self.assertEqual(sheet_rows[1][0], "Unit-1.Setpoint")
+            self.assertEqual(sheet_rows[1][0], "Unit-1_Setpoint")
             self.assertEqual(sheet_rows[1][2], "test_connection")
             self.assertEqual(sheet_rows[1][4:9], ("Int32", "DInt", 4, "Absolute access", f'ns={TIA_NAMESPACE};s="Unit-1.Setpoint"'))
             self.assertEqual(result["Substitute Value Usage"].max_row, 1)
             result.close()
 
-    def test_tag_name_replaces_only_quoted_boundaries_and_unsupported_characters(self):
+    def test_tag_name_replaces_quoted_boundaries_and_unsupported_characters(self):
         identifier = '"dbUnit_QuickChillerFirstFloor_Object"."1210.10-IP1"."Control"."PresetValue"'
-        self.assertEqual(tag_name(identifier), "dbUnit_QuickChillerFirstFloor_Object_1210.10-IP1_Control_PresetValue")
-        self.assertEqual(tag_name('"Unit-1.Setpoint"'), "Unit-1.Setpoint")
-        self.assertEqual(tag_name("a#b$c*d%e.f/g:h?i[j]k`l~m"), "a_b_c_d_e.f_g_h_i_j_k_l_m")
+        self.assertEqual(tag_name(identifier), "dbUnit_QuickChillerFirstFloor_Object_1210_10-IP1_Control_PresetValue")
+        self.assertEqual(tag_name('"Unit-1.Setpoint"'), "Unit-1_Setpoint")
+        self.assertEqual(tag_name("a#b$c*d%e.f/g:h?i[j]k`l~m"), "a_b_c_d_e_f_g_h_i_j_k_l_m")
 
     def test_multiple_opc_types_use_their_own_tia_mapping(self):
         (BASE_DIR / ".tmp").mkdir(exist_ok=True)
