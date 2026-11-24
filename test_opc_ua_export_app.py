@@ -269,7 +269,7 @@ class ExportWindowTest(unittest.TestCase):
             self.assertTrue(window.open_export_folder_button.isEnabled())
 
             window._copy_latest_export_folder()
-            self.assertEqual(QApplication.clipboard().text(), str(root))
+            self.assertEqual(Path(QApplication.clipboard().text()), workbook.resolve().parent)
 
             with patch("opc_ua_export_app.QProcess.startDetached", return_value=True) as start_process:
                 window._open_latest_export_folder()
